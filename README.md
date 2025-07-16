@@ -11,7 +11,7 @@ The Following Setup is tested and it is working:
  * Download CIFAR10-DVS dataset
  * transform .aedat to .mat by test_dvs.m with matlab.
  * prepare the train and test data set by dvscifar_dataloader.py [1](https://github.com/aa-samad/conv_snn)
- * you can obtain processed data in this [link](https://drive.google.com/file/d/1s2csG5eagX3ZMfFpZCd5d7g8zqJxht4U/view?usp=drive_link).
+ * you can obtain processed data in this [link](https://drive.google.com/file/d/1s2csG5eagX3ZMfFpZCd5d7g8zqJxht4U/view?usp=drive_link) (train:test=7:3) or [link](https://drive.google.com/file/d/1JGKL5avOrY3rgjHAamWGeP9RBvXqkBzm/view?usp=sharing)(train:test=9:1).
 
 ## Description
  * use a triangle-like surrogate gradient `ZIF` in `models/layer.py` for step function forward and backward.
