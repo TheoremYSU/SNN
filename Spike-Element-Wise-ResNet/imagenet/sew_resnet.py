@@ -221,7 +221,16 @@ class SEWResNet(nn.Module):
 
         x = self.avgpool(x)
         x = torch.flatten(x, 2)
-        return self.fc(x.mean(dim=0))
+        # x.shape = [T, N, C]
+        
+        # 对每个时间步独立进行FC,让模型学习每个时间步的信息
+        T, N, C = x.shape
+        x = x.reshape(T * N, C)  # [T*N, C]
+        x = self.fc(x)  # [T*N, num_classes]
+        x = x.reshape(T, N, -1)  # [T, N, num_classes]
+        
+        # 返回每个时间步的logits
+        return x
 
     def forward(self, x):
         return self._forward_impl(x)
