@@ -45,11 +45,21 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
         # with torch.autograd.detect_anomaly():
         if scaler is not None:
             with amp.autocast():
-                output = model(image)
-                loss = criterion(output, target)
+                output = model(image)  # [T, N, num_classes]
+                
+                # 对每个时间步独立计算loss
+                loss = 0
+                for t in range(output.shape[0]):
+                    loss += criterion(output[t], target)
+                loss = loss / output.shape[0]  # 平均所有时间步的loss
         else:
-            output = model(image)
-            loss = criterion(output, target)
+            output = model(image)  # [T, N, num_classes]
+            
+            # 对每个时间步独立计算loss
+            loss = 0
+            for t in range(output.shape[0]):
+                loss += criterion(output[t], target)
+            loss = loss / output.shape[0]  # 平均所有时间步的loss
 
         optimizer.zero_grad()
 
@@ -64,7 +74,12 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
 
         functional.reset_net(model)
 
-        acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
+        # 准确率计算: 先对每个时间步softmax，再平均概率
+        with torch.no_grad():
+            output_softmax = torch.nn.functional.softmax(output, dim=-1)  # [T, N, num_classes]
+            output_mean = output_softmax.mean(dim=0)  # [N, num_classes] - 平均所有时间步的概率
+            acc1, acc5 = utils.accuracy(output_mean, target, topk=(1, 5))
+        
         batch_size = image.shape[0]
         loss_s = loss.item()
         if math.isnan(loss_s):
@@ -91,11 +106,21 @@ def evaluate(model, criterion, data_loader, device, print_freq=100, header='Test
         for image, target in metric_logger.log_every(data_loader, print_freq, header):
             image = image.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
-            output = model(image)
-            loss = criterion(output, target)
+            output = model(image)  # [T, N, num_classes]
+            
+            # 对每个时间步独立计算loss
+            loss = 0
+            for t in range(output.shape[0]):
+                loss += criterion(output[t], target)
+            loss = loss / output.shape[0]  # 平均所有时间步的loss
+            
             functional.reset_net(model)
 
-            acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
+            # 准确率计算: 先对每个时间步softmax，再平均概率
+            output_softmax = torch.nn.functional.softmax(output, dim=-1)  # [T, N, num_classes]
+            output_mean = output_softmax.mean(dim=0)  # [N, num_classes] - 平均所有时间步的概率
+            acc1, acc5 = utils.accuracy(output_mean, target, topk=(1, 5))
+            
             # FIXME need to take into account that the datasets
             # could have been padded in distributed setup
             batch_size = image.shape[0]
