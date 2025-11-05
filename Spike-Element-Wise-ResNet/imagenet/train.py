@@ -154,7 +154,7 @@ def load_data(traindir, valdir, cache_dataset, distributed):
     if cache_dataset and os.path.exists(cache_path):
         # Attention, as the transforms are also cached!
         print("Loading dataset_train from {}".format(cache_path))
-        dataset, _ = torch.load(cache_path)
+        dataset, _ = torch.load(cache_path, weights_only=False)
     else:
         dataset = torchvision.datasets.ImageFolder(
             traindir,
@@ -175,7 +175,7 @@ def load_data(traindir, valdir, cache_dataset, distributed):
     if cache_dataset and os.path.exists(cache_path):
         # Attention, as the transforms are also cached!
         print("Loading dataset_test from {}".format(cache_path))
-        dataset_test, _ = torch.load(cache_path)
+        dataset_test, _ = torch.load(cache_path, weights_only=False)
     else:
         dataset_test = torchvision.datasets.ImageFolder(
             valdir,
@@ -291,7 +291,7 @@ def main(args):
         model_without_ddp = model.module
 
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location='cpu')
+        checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         model_without_ddp.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
