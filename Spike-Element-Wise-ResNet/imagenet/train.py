@@ -31,7 +31,7 @@ import numpy as np
 np.random.seed(_seed_)
 
 
-def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, print_freq, scaler=None):
+def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, print_freq, scaler=None, args=None):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value}'))
@@ -47,19 +47,27 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
             with amp.autocast():
                 output = model(image)  # [T, N, num_classes]
                 
-                # 对每个时间步独立计算loss
+                # 使用TET loss (包含MSE正则项) 或原始CE loss
+                if args and args.use_TET:
+                    loss = utils.TET_loss(output, target, criterion, args.means, args.lamb)
+                else:
+                    # 原始方法: 对每个时间步独立计算loss
+                    loss = 0
+                    for t in range(output.shape[0]):
+                        loss += criterion(output[t], target)
+                    loss = loss / output.shape[0]  # 平均所有时间步的loss
+        else:
+            output = model(image)  # [T, N, num_classes]
+            
+            # 使用TET loss (包含MSE正则项) 或原始CE loss
+            if args and args.use_TET:
+                loss = utils.TET_loss(output, target, criterion, args.means, args.lamb)
+            else:
+                # 原始方法: 对每个时间步独立计算loss
                 loss = 0
                 for t in range(output.shape[0]):
                     loss += criterion(output[t], target)
                 loss = loss / output.shape[0]  # 平均所有时间步的loss
-        else:
-            output = model(image)  # [T, N, num_classes]
-            
-            # 对每个时间步独立计算loss
-            loss = 0
-            for t in range(output.shape[0]):
-                loss += criterion(output[t], target)
-            loss = loss / output.shape[0]  # 平均所有时间步的loss
 
         optimizer.zero_grad()
 
@@ -74,11 +82,17 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
 
         functional.reset_net(model)
 
-        # 准确率计算: 先对每个时间步softmax，再平均概率
+        # 准确率计算
         with torch.no_grad():
-            output_softmax = torch.nn.functional.softmax(output, dim=-1)  # [T, N, num_classes]
-            output_mean = output_softmax.mean(dim=0)  # [N, num_classes] - 平均所有时间步的概率
-            acc1, acc5 = utils.accuracy(output_mean, target, topk=(1, 5))
+            if args and args.use_TET:
+                # TET方法: 先平均logits再计算准确率 (与TET论文一致)
+                output_mean = output.mean(dim=0)  # [N, num_classes] - 平均所有时间步的logits
+                acc1, acc5 = utils.accuracy(output_mean, target, topk=(1, 5))
+            else:
+                # 原始SEW方法: 先对每个时间步softmax，再平均概率 (集成学习风格)
+                output_softmax = torch.nn.functional.softmax(output, dim=-1)  # [T, N, num_classes]
+                output_mean = output_softmax.mean(dim=0)  # [N, num_classes] - 平均所有时间步的概率
+                acc1, acc5 = utils.accuracy(output_mean, target, topk=(1, 5))
         
         batch_size = image.shape[0]
         loss_s = loss.item()
@@ -99,7 +113,7 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
 
 
 
-def evaluate(model, criterion, data_loader, device, print_freq=100, header='Test:'):
+def evaluate(model, criterion, data_loader, device, print_freq=100, header='Test:', args=None):
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     with torch.no_grad():
@@ -116,10 +130,16 @@ def evaluate(model, criterion, data_loader, device, print_freq=100, header='Test
             
             functional.reset_net(model)
 
-            # 准确率计算: 先对每个时间步softmax，再平均概率
-            output_softmax = torch.nn.functional.softmax(output, dim=-1)  # [T, N, num_classes]
-            output_mean = output_softmax.mean(dim=0)  # [N, num_classes] - 平均所有时间步的概率
-            acc1, acc5 = utils.accuracy(output_mean, target, topk=(1, 5))
+            # 准确率计算
+            if args and args.use_TET:
+                # TET方法: 先平均logits再计算准确率
+                output_mean = output.mean(dim=0)  # [N, num_classes] - 平均所有时间步的logits
+                acc1, acc5 = utils.accuracy(output_mean, target, topk=(1, 5))
+            else:
+                # 原始SEW方法: 先对每个时间步softmax，再平均概率
+                output_softmax = torch.nn.functional.softmax(output, dim=-1)  # [T, N, num_classes]
+                output_mean = output_softmax.mean(dim=0)  # [N, num_classes] - 平均所有时间步的概率
+                acc1, acc5 = utils.accuracy(output_mean, target, topk=(1, 5))
             
             # FIXME need to take into account that the datasets
             # could have been padded in distributed setup
@@ -230,6 +250,10 @@ def main(args):
 
     if args.connect_f:
         output_dir += f'_cnf_{args.connect_f}'
+    
+    # 添加TET相关标识
+    if args.use_TET:
+        output_dir += f'_TET_lamb{args.lamb}_means{args.means}'
 
     if output_dir:
         utils.mkdir(output_dir)
@@ -302,7 +326,7 @@ def main(args):
         test_acc5_at_max_test_acc1 = checkpoint['test_acc5_at_max_test_acc1']
 
     if args.test_only:
-        evaluate(model, criterion, data_loader_test, device=device, header='Test:')
+        evaluate(model, criterion, data_loader_test, device=device, header='Test:', args=args)
         return
 
     if args.tb and utils.is_main_process():
@@ -321,14 +345,14 @@ def main(args):
         save_max = False
         if args.distributed:
             train_sampler.set_epoch(epoch)
-        train_loss, train_acc1, train_acc5 = train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args.print_freq, scaler)
+        train_loss, train_acc1, train_acc5 = train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args.print_freq, scaler, args)
         if utils.is_main_process():
             train_tb_writer.add_scalar('train_loss', train_loss, epoch)
             train_tb_writer.add_scalar('train_acc1', train_acc1, epoch)
             train_tb_writer.add_scalar('train_acc5', train_acc5, epoch)
         lr_scheduler.step()
 
-        test_loss, test_acc1, test_acc5 = evaluate(model, criterion, data_loader_test, device=device, header='Test:')
+        test_loss, test_acc1, test_acc5 = evaluate(model, criterion, data_loader_test, device=device, header='Test:', args=args)
         if te_tb_writer is not None:
             if utils.is_main_process():
 
@@ -450,6 +474,14 @@ def parse_args():
                         help='T_max of CosineAnnealingLR.')
     parser.add_argument('--connect_f', type=str, help='spike-element-wise connect function')
     parser.add_argument('--zero_init_residual', action='store_true', help='zero init all residual blocks')
+    
+    # TET (Temporal Efficient Training) parameters
+    parser.add_argument('--use_TET', action='store_true',
+                        help='Use Temporal Efficient Training with MSE regularization')
+    parser.add_argument('--means', default=1.0, type=float,
+                        help='Target value for MSE regularization in TET loss (default: 1.0)')
+    parser.add_argument('--lamb', default=0.0, type=float,
+                        help='Weight for MSE regularization term in TET loss (default: 0.0). Set to 1e-3 or 1e-4 to enable regularization')
 
     args = parser.parse_args()
     return args
@@ -460,11 +492,18 @@ if __name__ == "__main__":
     main(args)
 
 '''
+训练示例命令:
 
-python m torch.distributed.launch --nproc_per_node=8 --use_env train.py --cos_lr_T 320 --model sew_resnet18 -b 32 --output-dir ./logs --tb --print-freq 4096 --amp --cache-dataset --connect_f ADD --T 4 --lr 0.1 --epoch 320 --data-path /raid/wfang/imagenet
+# 原始SEW-ResNet训练 (不使用TET)
+python -m torch.distributed.launch --nproc_per_node=8 --use_env train.py --cos_lr_T 320 --model sew_resnet18 -b 32 --output-dir ./logs --tb --print-freq 4096 --amp --cache-dataset --connect_f ADD --T 4 --lr 0.1 --epochs 320 --data-path /raid/wfang/imagenet
 
-python train.py --cos_lr_T 320 --model spiking_resnet18 -b 32 --output-dir ./logs --tb --print-freq 4096 --amp --cache-dataset --T 4 --lr 0.1 --epoch 320 --data-path /raid/wfang/imagenet --device cuda:0 --zero_init_residual
+# 使用TET训练 (添加MSE正则项)
+python -m torch.distributed.launch --nproc_per_node=8 --use_env train.py --cos_lr_T 320 --model sew_resnet18 -b 32 --output-dir ./logs --tb --print-freq 4096 --amp --cache-dataset --connect_f ADD --T 4 --lr 0.1 --epochs 320 --data-path /raid/wfang/imagenet --use_TET --lamb 0.001 --means 1.0
 
+# 单GPU训练
+python train.py --cos_lr_T 320 --model spiking_resnet18 -b 32 --output-dir ./logs --tb --print-freq 4096 --amp --cache-dataset --T 4 --lr 0.1 --epochs 320 --data-path /raid/wfang/imagenet --device cuda:0 --zero_init_residual
 
+# 单GPU + TET训练
+python train.py --cos_lr_T 320 --model spiking_resnet18 -b 32 --output-dir ./logs --tb --print-freq 4096 --amp --cache-dataset --T 4 --lr 0.1 --epochs 320 --data-path /raid/wfang/imagenet --device cuda:0 --zero_init_residual --use_TET --lamb 0.0001 --means 1.0
 
 '''

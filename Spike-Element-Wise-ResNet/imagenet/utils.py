@@ -254,3 +254,37 @@ def init_distributed_mode(args):
     setup_for_distributed(args.rank == 0)
 
 
+def TET_loss(outputs, labels, criterion, means, lamb):
+    """
+    Temporal Efficient Training Loss with MSE regularization
+    
+    Args:
+        outputs: [T, N, num_classes] - model outputs for T timesteps
+        labels: [N] - ground truth labels
+        criterion: loss function (e.g., CrossEntropyLoss)
+        means: target value for MSE regularization (default: 1.0)
+        lamb: weight for MSE regularization term (default: 0.0)
+    
+    Returns:
+        Total loss combining cross-entropy and MSE regularization
+    """
+    T = outputs.size(0)  # SEW uses [T, N, C] format
+    
+    # L_TET: Average cross-entropy loss over all timesteps
+    Loss_es = 0
+    for t in range(T):
+        Loss_es += criterion(outputs[t], labels)
+    Loss_es = Loss_es / T
+    
+    # L_mse: MSE regularization to constrain logits around 'means'
+    if lamb != 0:
+        MMDLoss = torch.nn.MSELoss()
+        y = torch.zeros_like(outputs).fill_(means)
+        Loss_mmd = MMDLoss(outputs, y)
+    else:
+        Loss_mmd = 0
+    
+    # L_Total = (1-λ)*L_TET + λ*L_mse
+    return (1 - lamb) * Loss_es + lamb * Loss_mmd
+
+
