@@ -29,8 +29,8 @@ import data_loaders
 from functions import TET_loss, seed_all
 
 
-# 默认GPU设置
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,3,6,7"
+# 默认GPU设置 (可通过环境变量CUDA_VISIBLE_DEVICES覆盖)
+# os.environ["CUDA_VISIBLE_DEVICES"] = "2,3,6,7"  # 注释掉硬编码,改为命令行控制
 
 parser = argparse.ArgumentParser(description='PyTorch Temporal Efficient Training (Improved)')
 
@@ -144,6 +144,38 @@ parser.add_argument('-e', '--evaluate',
 args = parser.parse_args()
 
 
+def check_cuda_availability():
+    """检查CUDA和GPU可用性"""
+    import torch
+    
+    print(f"\n{'='*80}")
+    print(f"GPU环境检查")
+    print(f"{'='*80}")
+    print(f"CUDA是否可用: {torch.cuda.is_available()}")
+    
+    if torch.cuda.is_available():
+        print(f"CUDA版本: {torch.version.cuda}")
+        print(f"可用GPU数量: {torch.cuda.device_count()}")
+        print(f"当前CUDA设备: {torch.cuda.current_device()}")
+        
+        for i in range(torch.cuda.device_count()):
+            print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+        
+        # 检查CUDA_VISIBLE_DEVICES环境变量
+        cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES', '未设置')
+        print(f"CUDA_VISIBLE_DEVICES: {cuda_visible}")
+    else:
+        print(f"⚠️  警告: CUDA不可用!")
+        print(f"请检查:")
+        print(f"  1. PyTorch是否安装了CUDA版本")
+        print(f"  2. CUDA驱动是否正确安装")
+        print(f"  3. CUDA_VISIBLE_DEVICES环境变量设置")
+    
+    print(f"{'='*80}\n")
+    
+    return torch.cuda.is_available()
+
+
 def reduce_mean(tensor, nprocs):
     """所有GPU的tensor取平均"""
     rt = tensor.clone()
@@ -235,13 +267,43 @@ def load_checkpoint(args, model, optimizer, scheduler):
 
 
 def main():
+    # 检查CUDA可用性
+    if not check_cuda_availability():
+        print("❌ 错误: 没有检测到可用的GPU!")
+        print("解决方案:")
+        print("  1. 检查CUDA_VISIBLE_DEVICES环境变量")
+        print("  2. 运行: export CUDA_VISIBLE_DEVICES=2,3,6,7")
+        print("  3. 或在脚本中设置: export CUDA_VISIBLE_DEVICES=0,1,2,3")
+        return
+    
     args.nprocs = torch.cuda.device_count()
+    
+    if args.nprocs == 0:
+        print("❌ 错误: 可用GPU数量为0!")
+        print("请设置CUDA_VISIBLE_DEVICES环境变量")
+        return
+    
+    print(f"使用 {args.nprocs} 个GPU进行分布式训练")
     mp.spawn(main_worker, nprocs=args.nprocs, args=(args.nprocs, args))
 
 
 def main_worker(local_rank, nprocs, args):
     """每个GPU上的训练worker"""
     args.local_rank = local_rank
+
+    # 在子进程中再次检查CUDA可用性
+    if not torch.cuda.is_available():
+        print(f"[Rank {local_rank}] ❌ 错误: 子进程中CUDA不可用!")
+        print(f"[Rank {local_rank}] CUDA_VISIBLE_DEVICES = {os.environ.get('CUDA_VISIBLE_DEVICES', '未设置')}")
+        print(f"[Rank {local_rank}] 这可能是因为:")
+        print(f"  1. PyTorch没有正确编译CUDA支持")
+        print(f"  2. CUDA驱动版本与PyTorch不兼容")
+        print(f"  3. 环境变量在multiprocessing spawn中丢失")
+        return
+    
+    if torch.cuda.device_count() == 0:
+        print(f"[Rank {local_rank}] ❌ 错误: 可用GPU数量为0!")
+        return
 
     # 设置随机种子
     if args.seed is not None:
@@ -255,12 +317,19 @@ def main_worker(local_rank, nprocs, args):
     best_acc1 = 0.0
 
     # 初始化分布式进程组
-    dist.init_process_group(
-        backend='nccl',
-        init_method='tcp://127.0.0.1:23456',
-        world_size=args.nprocs,
-        rank=local_rank
-    )
+    try:
+        dist.init_process_group(
+            backend='nccl',
+            init_method='tcp://127.0.0.1:23456',
+            world_size=args.nprocs,
+            rank=local_rank
+        )
+    except Exception as e:
+        print(f"[Rank {local_rank}] ❌ 分布式初始化失败: {e}")
+        print(f"[Rank {local_rank}] CUDA available: {torch.cuda.is_available()}")
+        print(f"[Rank {local_rank}] CUDA device count: {torch.cuda.device_count()}")
+        print(f"[Rank {local_rank}] CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', '未设置')}")
+        raise
 
     # 设置实验目录 (等待主进程创建完成)
     if local_rank == 0:

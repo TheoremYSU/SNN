@@ -27,6 +27,11 @@ LR=0.1
 WORKERS=4
 
 # GPU设置
+# 注意: 请设置CUDA_VISIBLE_DEVICES环境变量来指定要使用的GPU
+# 例如: export CUDA_VISIBLE_DEVICES=2,3,6,7  # 使用GPU 2,3,6,7
+# 或者在下面取消注释并设置:
+# export CUDA_VISIBLE_DEVICES=2,3,6,7
+
 NPROCS=4                 # GPU数量(根据可用GPU数量设置)
 
 # Checkpoint设置
@@ -81,6 +86,17 @@ fi
 echo "执行命令:"
 echo "$CMD"
 echo ""
+
+# 检查CUDA_VISIBLE_DEVICES环境变量
+if [ -z "$CUDA_VISIBLE_DEVICES" ]; then
+    echo "⚠️  警告: CUDA_VISIBLE_DEVICES未设置!"
+    echo "   将使用系统所有可用GPU"
+    echo "   建议设置: export CUDA_VISIBLE_DEVICES=2,3,6,7"
+    echo ""
+else
+    echo "✓ 使用GPU: $CUDA_VISIBLE_DEVICES"
+    echo ""
+fi
 
 eval $CMD
 
