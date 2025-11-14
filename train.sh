@@ -1,11 +1,13 @@
 #!/bin/bash
 
-# DVS-CIFAR10 训练脚本
-# 使用改进版训练代码,支持TensorBoard和完整checkpoint管理
+# TET训练脚本 - 改进版
+# 支持DVS-CIFAR10, CIFAR-10, CIFAR-100等多种数据集
 
 # ===================== 配置参数 =====================
-# 数据路径(根据实际情况修改)
-DATA_PATH="/home/liuwei/lzx/DVS-CIFAR10"
+# 数据集配置
+DATASET="dvscifar10"     # 数据集类型: dvscifar10 / cifar10 / cifar100
+DATA_PATH="/home/liuwei/lzx/DVS-CIFAR10"  # 数据路径
+NUM_CLASSES=10           # 类别数: DVS-CIFAR10=10, CIFAR-10=10, CIFAR-100=100
 
 # 输出目录(使用当前目录下的runs文件夹,自动创建)
 OUTPUT_DIR="./runs"
@@ -14,7 +16,7 @@ OUTPUT_DIR="./runs"
 EXP_NAME=""
 
 # 模型参数
-MODEL="vgg_snn"          # 模型: vgg_snn / resnet19
+MODEL="VGGSNN"           # 模型: VGGSNN / resnet19
 T=4                      # 时间步数
 LAMBDA=1e-4              # MSE损失权重
 
@@ -35,6 +37,8 @@ RESUME=""                # 恢复训练路径,留空则从头训练
 echo "======================================"
 echo "  TET训练 - 改进版"
 echo "======================================"
+echo "数据集: $DATASET"
+echo "类别数: $NUM_CLASSES"
 echo "模型: $MODEL"
 echo "时间步: T=$T"
 echo "Lambda: $LAMBDA"
@@ -50,6 +54,8 @@ mkdir -p "$OUTPUT_DIR"
 
 # 构建训练命令
 CMD="python -u main_training_distribute_improved.py \
+    --dataset $DATASET \
+    --num-classes $NUM_CLASSES \
     --data-path $DATA_PATH \
     --output-dir $OUTPUT_DIR \
     --model $MODEL \

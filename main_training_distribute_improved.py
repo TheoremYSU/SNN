@@ -99,6 +99,15 @@ parser.add_argument('--model',
                     type=str,
                     choices=['VGGSNN', 'resnet19'],
                     help='model architecture')
+parser.add_argument('--num-classes',
+                    default=10,
+                    type=int,
+                    help='number of classes (default: 10 for DVS-CIFAR10)')
+parser.add_argument('--dataset',
+                    default='dvscifar10',
+                    type=str,
+                    choices=['dvscifar10', 'cifar10', 'cifar100'],
+                    help='dataset type: dvscifar10, cifar10, cifar100')
 parser.add_argument('--seed',
                     default=1000,
                     type=int,
@@ -267,11 +276,14 @@ def main_worker(local_rank, nprocs, args):
         args.checkpoint_dir = os.path.join(exp_dir, 'checkpoints')
         args.log_dir = os.path.join(exp_dir, 'logs')
 
-    # 创建模型
+    # 创建模型 (使用正确的类别数)
+    if local_rank == 0:
+        print(f"创建模型: {args.model}, 类别数: {args.num_classes}")
+    
     if args.model == 'VGGSNN':
-        model = VGGSNN()
+        model = VGGSNN(num_classes=args.num_classes)
     elif args.model == 'resnet19':
-        model = resnet19(num_classes=10)
+        model = resnet19(num_classes=args.num_classes)
     else:
         raise ValueError(f"Unknown model: {args.model}")
     
@@ -303,8 +315,27 @@ def main_worker(local_rank, nprocs, args):
 
     cudnn.benchmark = True
 
-    # 加载数据
-    train_dataset, val_dataset = data_loaders.build_dvscifar(args.data_path)
+    # 加载数据 (支持多种数据集)
+    if local_rank == 0:
+        print(f"加载数据集: {args.dataset}, 路径: {args.data_path}")
+    
+    if args.dataset == 'dvscifar10':
+        train_dataset, val_dataset = data_loaders.build_dvscifar(args.data_path)
+    elif args.dataset == 'cifar10':
+        train_dataset, val_dataset = data_loaders.auto_build_cifar(
+            data_path=args.data_path,
+            use_cifar10=True
+        )
+    elif args.dataset == 'cifar100':
+        train_dataset, val_dataset = data_loaders.auto_build_cifar(
+            data_path=args.data_path,
+            use_cifar10=False
+        )
+    else:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
+    
+    if local_rank == 0:
+        print(f"训练集大小: {len(train_dataset)}, 测试集大小: {len(val_dataset)}")
     
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     train_loader = torch.utils.data.DataLoader(
