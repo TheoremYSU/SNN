@@ -433,9 +433,9 @@ def main_worker(local_rank, nprocs, args):
 
     # 仅评估模式
     if args.evaluate:
-        acc1, acc5 = validate(val_loader, model, criterion, local_rank, args)
+        val_loss, acc1, acc5 = validate(val_loader, model, criterion, local_rank, args)
         if local_rank == 0:
-            print(f'Validation Results: Acc@1 {acc1:.3f}, Acc@5 {acc5:.3f}')
+            print(f'Validation Results: Loss {val_loss:.4f}, Acc@1 {acc1:.3f}%, Acc@5 {acc5:.3f}%')
         return
 
     # 训练循环
