@@ -1,0 +1,35 @@
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 测试和覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 虚拟环境
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 日志和临时文件
+*.log
+logs/
+*.tmp
+
+# 模型checkpoint
+checkpoints/
+*.pth
+*.pt
+
+# 数据
+data/
+datasets/
