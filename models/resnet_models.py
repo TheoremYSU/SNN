@@ -140,17 +140,35 @@ class ResNet(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
 
+        # 保存GAP之前的特征图(用于TSE)
+        features_before_gap = x
+        
         x = self.avgpool(x)
         x = torch.flatten(x, 2)
         x = self.fc1_s(x)
         x = self.spike(x)
         x = self.fc2_s(x)
         #x = self.spike_out(x)
-        return x
+        
+        # 返回分类输出和GAP之前的特征
+        return x, features_before_gap
 
-    def forward(self, x):
+    def forward(self, x, return_features=False):
+        """
+        Args:
+            x: 输入图像
+            return_features: 是否返回GAP之前的特征图(用于TSE)
+        
+        Returns:
+            如果return_features=True: (output, features_before_gap)
+            否则: output
+        """
         x = add_dimention(x, self.T)
-        return self._forward_impl(x)
+        output, features = self._forward_impl(x)
+        if return_features:
+            return output, features
+        else:
+            return output
 
 
 

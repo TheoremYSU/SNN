@@ -26,7 +26,7 @@ from torch.utils.tensorboard import SummaryWriter
 from models.resnet_models import resnet19
 from models.VGG_models import VGGSNN
 import data_loaders
-from functions import TET_loss, seed_all
+from functions import TET_loss, TSE_loss, seed_all
 
 
 # 默认GPU设置 (可通过环境变量CUDA_VISIBLE_DEVICES覆盖)
@@ -82,16 +82,39 @@ parser.add_argument('--means',
                     type=float,
                     metavar='N',
                     help='target mean for MSE regularization (default: 1.0)')
-parser.add_argument('--TET',
-                    default=True,
-                    type=bool,
-                    metavar='N',
-                    help='if use Temporal Efficient Training (default: True)')
+parser.add_argument('--tet',
+                    dest='TET',
+                    action='store_true',
+                    help='Enable Temporal Efficient Training (default: enabled)')
+parser.add_argument('--no-tet',
+                    dest='TET',
+                    action='store_false',
+                    help='Disable Temporal Efficient Training')
+parser.set_defaults(TET=True)
 parser.add_argument('--lamb',
                     default=0.0001,
                     type=float,
                     metavar='N',
                     help='MSE regularization weight (default: 0.0001)')
+
+# ==================== TSE参数 (新增) ====================
+parser.add_argument('--tse',
+                    dest='TSE',
+                    action='store_true',
+                    help='Enable Temporal-Self-Erasing supervision (default: disabled)')
+parser.add_argument('--no-tse',
+                    dest='TSE',
+                    action='store_false',
+                    help='Disable Temporal-Self-Erasing supervision')
+parser.set_defaults(TSE=False)
+parser.add_argument('--tau-f',
+                    default=0.5,
+                    type=float,
+                    help='Fixed threshold for TSE mask (default: 0.5)')
+parser.add_argument('--kappa',
+                    default=1.0,
+                    type=float,
+                    help='Std multiplier for dynamic threshold in TSE (default: 1.0)')
 
 # ==================== 模型和优化器 ====================
 parser.add_argument('--model',
@@ -444,6 +467,7 @@ def main_worker(local_rank, nprocs, args):
         print(f"开始训练: {args.epochs} epochs")
         print(f"模型: {args.model}, T={args.T}, Batch size={args.batch_size * args.nprocs}")
         print(f"TET: {args.TET}, lamb={args.lamb}, means={args.means}")
+        print(f"TSE: {args.TSE}, tau_f={args.tau_f}, kappa={args.kappa}")
         print(f"{'='*80}\n")
 
     for epoch in range(args.start_epoch, args.epochs):
@@ -550,14 +574,41 @@ def train(train_loader, model, criterion, optimizer, epoch, local_rank, args):
         target = target.cuda(local_rank, non_blocking=True)
 
         # 前向传播
-        output = model(images)
-        mean_out = torch.mean(output, dim=1)
-        
-        # 计算损失
-        if not args.TET:
-            loss = criterion(mean_out, target)
+        if args.TSE:
+            # TSE需要GAP之前的特征图
+            output, features_before_gap = model(images, return_features=True)
+            mean_out = torch.mean(output, dim=1)
+            
+            # 获取分类层(fc2)
+            # 对于ResNet19: model.module.fc2
+            # 对于VGGSNN: model.module.classifier (需要适配)
+            if hasattr(model.module, 'fc2'):
+                fc_layer = model.module.fc2
+            elif hasattr(model.module, 'classifier'):
+                # VGGSNN的分类层
+                fc_layer = model.module.classifier
+            else:
+                raise AttributeError("Model does not have fc2 or classifier layer")
+            
+            # 计算TSE损失
+            loss = TSE_loss(
+                feature_maps=features_before_gap,
+                fc_layer=fc_layer,
+                labels=target,
+                criterion=criterion,
+                tau_f=args.tau_f,
+                kappa=args.kappa
+            )
         else:
-            loss = TET_loss(output, target, criterion, args.means, args.lamb)
+            # 标准训练或TET
+            output = model(images)
+            mean_out = torch.mean(output, dim=1)
+            
+            # 计算损失
+            if not args.TET:
+                loss = criterion(mean_out, target)
+            else:
+                loss = TET_loss(output, target, criterion, args.means, args.lamb)
 
         # 计算准确率
         acc1, acc5 = accuracy(mean_out, target, topk=(1, 5))
