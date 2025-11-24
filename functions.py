@@ -117,10 +117,31 @@ def TSE_loss(feature_maps, fc_layer, labels, criterion, tau_f=0.5, kappa=1.0):
             loss_t = criterion(p_t, labels)
         else:
             # t > 0: 使用TSE机制
-            # Step 2.1: 平均前t步的预测图并Softmax (论文 Eq.7)
+            # Step 2.1: 平均**前t-1步**的预测图并Softmax (论文 Eq.7)
+            # 重要: 是前t-1步(即索引0到t-1),不包括当前步t
+            # 公式: P̄^{t-1} = Softmax(1/(t-1) * Σ_{k=1}^{t-1} P^k)
+            # 注意: Python索引从0开始,所以t对应的是第t+1个元素
+            # prediction_maps[:t]包含索引0到t-1,对应时间步1到t,共t个
+            # 我们需要的是前t-1个,所以应该是prediction_maps[:t-1]? 不对!
+            # 因为当前循环的t从0开始,所以prediction_maps[:t]已经是前t个了
+            # 等等,让我重新理清楚:
+            # - 外层循环: for t in range(T), 所以t=0,1,2,...,T-1
+            # - 当t=0时,是第1个时间步
+            # - 当t=1时,是第2个时间步,应该用前1步(t=0)的预测
+            # - 当t=2时,是第3个时间步,应该用前2步(t=0,1)的预测
+            # 所以prediction_maps[:t]正好对应前t步,这是对的!
+            
             # P_avg shape: [B, num_classes, H, W]
-            P_avg = torch.stack(prediction_maps[:t], dim=1).mean(dim=1)  # [B, num_classes, H, W]
-            P_avg_prob = torch.softmax(P_avg, dim=1)  # Softmax along class dimension
+            # 先求和再平均(虽然mean()直接做也行,但这样更清晰对应论文公式)
+            if t == 1:
+                # 第2个时间步,只有1个历史
+                P_avg = prediction_maps[0]  # [B, num_classes, H, W]
+            else:
+                # 第3+个时间步,有多个历史
+                P_sum = torch.stack(prediction_maps[:t], dim=1).sum(dim=1)  # [B, num_classes, H, W]
+                P_avg = P_sum / t  # 平均
+            
+            P_avg_prob = torch.softmax(P_avg, dim=1)  # Softmax (沿class维度)
             
             # Step 2.2: 提取真实类别的概率图
             # P_{t-1}_y shape: [B, H, W]
