@@ -579,21 +579,27 @@ def train(train_loader, model, criterion, optimizer, epoch, local_rank, args):
             output, features_before_gap = model(images, return_features=True)
             mean_out = torch.mean(output, dim=1)
             
-            # 获取分类层(fc2)
-            # 对于ResNet19: model.module.fc2
-            # 对于VGGSNN: model.module.classifier (需要适配)
-            if hasattr(model.module, 'fc2'):
-                fc_layer = model.module.fc2
+            # 获取完整的分类器序列
+            # ResNet19: fc1(512->256) + spike + fc2(256->100)
+            # VGGSNN: classifier (单层或多层Sequential)
+            if hasattr(model.module, 'fc1') and hasattr(model.module, 'fc2'):
+                # ResNet19的两阶段FC
+                # 构建完整的分类序列: fc1 -> spike -> fc2
+                fc_layers = nn.Sequential(
+                    model.module.fc1,
+                    model.module.spike,
+                    model.module.fc2
+                )
             elif hasattr(model.module, 'classifier'):
-                # VGGSNN的分类层
-                fc_layer = model.module.classifier
+                # VGGSNN的分类层(已经是Sequential)
+                fc_layers = model.module.classifier
             else:
-                raise AttributeError("Model does not have fc2 or classifier layer")
+                raise AttributeError("Model does not have expected FC structure")
             
             # 计算TSE损失
             loss = TSE_loss(
                 feature_maps=features_before_gap,
-                fc_layer=fc_layer,
+                fc_layers=fc_layers,
                 labels=target,
                 criterion=criterion,
                 tau_f=args.tau_f,

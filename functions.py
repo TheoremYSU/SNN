@@ -51,7 +51,7 @@ def TET_loss(outputs, labels, criterion, means, lamb):
     return (1 - lamb) * Loss_es + lamb * Loss_mmd # L_Total
 
 
-def TSE_loss(feature_maps, fc_layer, labels, criterion, tau_f=0.5, kappa=1.0):
+def TSE_loss(feature_maps, fc_layers, labels, criterion, tau_f=0.5, kappa=1.0):
     """
     Temporal-Self-Erasing (TSE) supervision loss.
     
@@ -65,7 +65,9 @@ def TSE_loss(feature_maps, fc_layer, labels, criterion, tau_f=0.5, kappa=1.0):
     
     Args:
         feature_maps: [B, T, C, H, W] - T个时间步的特征图(GAP之前)
-        fc_layer: 全连接分类层 (input: C, output: num_classes)
+        fc_layers: 分类器层(可以是单层或多层Sequential)
+                  - 单层: nn.Linear(C, num_classes)
+                  - 多层: nn.Sequential(fc1, fc2, ...)
         labels: [B] - 真实标签
         criterion: 交叉熵损失函数
         tau_f: 固定阈值 (论文中的τ_f)
@@ -82,7 +84,15 @@ def TSE_loss(feature_maps, fc_layer, labels, criterion, tau_f=0.5, kappa=1.0):
     - Eq.(12): L = L_CE(p_1, y) + Σ L_CE(p_t, y)
     """
     B, T, C, H, W = feature_maps.shape
-    num_classes = fc_layer.out_features
+    
+    # 获取输出类别数
+    if isinstance(fc_layers, nn.Sequential):
+        # 多层FC,取最后一层的输出维度
+        num_classes = list(fc_layers.children())[-1].out_features
+    else:
+        # 单层FC
+        num_classes = fc_layers.out_features
+    
     device = feature_maps.device
     
     # 初始化分类预测图列表
@@ -95,8 +105,8 @@ def TSE_loss(feature_maps, fc_layer, labels, criterion, tau_f=0.5, kappa=1.0):
         F_t = feature_maps[:, t]  # [B, C, H, W]
         # 重排为 [B, H, W, C] 以对每个位置应用FC
         F_t_reshaped = F_t.permute(0, 2, 3, 1)  # [B, H, W, C]
-        # 应用FC层: [B, H, W, C] -> [B, H, W, num_classes]
-        P_t = fc_layer(F_t_reshaped)  # [B, H, W, num_classes]
+        # 应用FC层(支持单层或多层): [B, H, W, C] -> [B, H, W, num_classes]
+        P_t = fc_layers(F_t_reshaped)  # [B, H, W, num_classes]
         # 转回 [B, num_classes, H, W]
         P_t = P_t.permute(0, 3, 1, 2)  # [B, num_classes, H, W]
         prediction_maps.append(P_t)
@@ -113,7 +123,7 @@ def TSE_loss(feature_maps, fc_layer, labels, criterion, tau_f=0.5, kappa=1.0):
             # GAP + FC
             pooled = torch.nn.functional.adaptive_avg_pool2d(F_t, (1, 1))  # [B, C, 1, 1]
             pooled = pooled.view(B, -1)  # [B, C]
-            p_t = fc_layer(pooled)  # [B, num_classes]
+            p_t = fc_layers(pooled)  # [B, num_classes]
             loss_t = criterion(p_t, labels)
         else:
             # t > 0: 使用TSE机制
@@ -171,7 +181,7 @@ def TSE_loss(feature_maps, fc_layer, labels, criterion, tau_f=0.5, kappa=1.0):
             # Step 2.6: GAP + FC 得到调制后的预测
             pooled = torch.nn.functional.adaptive_avg_pool2d(F_t_erased, (1, 1))
             pooled = pooled.view(B, -1)  # [B, C]
-            p_t_tilde = fc_layer(pooled)  # [B, num_classes]
+            p_t_tilde = fc_layers(pooled)  # [B, num_classes]
             
             # 计算损失
             loss_t = criterion(p_t_tilde, labels)

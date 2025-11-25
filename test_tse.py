@@ -46,7 +46,7 @@ def test_tse_loss_basic():
     try:
         loss = TSE_loss(
             feature_maps=feature_maps,
-            fc_layer=fc_layer,
+            fc_layers=fc_layer,
             labels=labels,
             criterion=criterion,
             tau_f=0.5,
@@ -83,7 +83,8 @@ def test_tse_threshold_logic():
     feature_maps = torch.randn(B, T, C, H, W)
     labels = torch.tensor([1, 3])  # 固定标签便于分析
     
-    fc_layer = nn.Linear(C, num_classes)
+    # 单层FC (用于简单测试)
+    fc_layers = nn.Linear(C, num_classes)
     criterion = nn.CrossEntropyLoss()
     
     # 不同的tau_f和kappa
@@ -100,7 +101,7 @@ def test_tse_threshold_logic():
     for tau_f, kappa, desc in test_params:
         loss = TSE_loss(
             feature_maps=feature_maps,
-            fc_layer=fc_layer,
+            fc_layers=fc_layers,
             labels=labels,
             criterion=criterion,
             tau_f=tau_f,
@@ -138,7 +139,7 @@ def test_tse_time_independence():
         feature_maps = torch.randn(B, T, C, H, W)
         loss = TSE_loss(
             feature_maps=feature_maps,
-            fc_layer=fc_layer,
+            fc_layers=fc_layer,
             labels=labels,
             criterion=criterion,
             tau_f=0.5,
@@ -170,7 +171,7 @@ def test_tse_gradient_flow():
     # 计算损失
     loss = TSE_loss(
         feature_maps=feature_maps,
-        fc_layer=fc_layer,
+        fc_layers=fc_layer,
         labels=labels,
         criterion=criterion,
         tau_f=0.5,
